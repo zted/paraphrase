@@ -4,23 +4,24 @@ from nltk.corpus import brown
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
 
-max_examples = 100
-maxlen = 7
+max_examples = 10000
+maxlen = 17
 minlen = 3
 hidden_dim = 128
 embedding_dim = 100
 batch_size = 50
-num_epochs = 500
-validate_cycle = 10
+num_epochs = 1000
+validate_cycle = 100
+validation_size = 5
 
 
-def pad_sequences(arrays, maxlen):
+def pad_sequences(arrays, maxlen, pad_symbol=0):
     newArray = []
     for a in arrays:
         someLen = len(a)
         assert someLen <= maxlen
         diff = maxlen - someLen
-        padded = a + [0] * diff
+        padded = a + [pad_symbol] * diff
         newArray.append(padded)
     return newArray
 
@@ -192,15 +193,10 @@ def train_batch(X, Y):
     return loss_t, summary
 
 
-X_test = [X[1]]
-X_test = np.array(X_test).T
-feed_dict = {enc_inp[t]: X_test[t] for t in range(seq_length)}
 allWords = all_words
-nb_batches = int(np.ceil(len(X_test) / float(batch_size)))
-
+nb_batches = int(np.ceil(len(X) / float(batch_size)))
 
 print('Number of training examples we have: {}\nNumber of unique words: {}'.format(len(sentences),num_words-1))
-print('Original sentence:\n{}'.format(raw_sentences[1]))
 print('Begin training')
 for t in range(num_epochs):
 
@@ -211,10 +207,36 @@ for t in range(num_epochs):
         loss_t, summary = train_batch(X_batch, X_batch)
 
     if (t+1) % validate_cycle == 0:
+        val_indices = np.random.choice(range(max_examples), validation_size, replace=False)
+        X_test = np.array([X[v] for v in val_indices])
+        X_test = np.array(X_test).T
+        feed_dict = {enc_inp[t]: X_test[t] for t in range(seq_length)}
         print ('Finished training epoch {}\nLoss: {}'.format(t+1, loss_t))
         dec_outputs_batch = sess.run(dec_outputs, feed_dict)
         answers = [logits_t.argmax(axis=1) for logits_t in dec_outputs_batch]
+        answers = np.array(answers).T
+
         generated_text = []
-        for a in answers:
-            generated_text.append(allWords[a[0]])
-        print(' '.join(generated_text))
+        for sent in answers:
+            sentString = []
+            for token in sent:
+                sentString.append(allWords[token])
+            generated_text.append(' '.join(sentString))
+
+        print('Original sentences:\n{}'.format([raw_sentences[v] for v in val_indices]))
+        print(generated_text)
+
+
+unseen_sent = 'defendants testifies after fears about election'
+unseen_vectorized = [word2idx[w] for w in unseen_sent.split(' ')]
+vector_padded = np.array(pad_sequences([unseen_vectorized], maxlen))
+X_test = np.array(vector_padded)
+X_test = np.array(X_test).T
+feed_dict = {enc_inp[t]: X_test[t] for t in range(seq_length)}
+dec_outputs_batch = sess.run(dec_outputs, feed_dict)
+answers = [logits_t.argmax(axis=1) for logits_t in dec_outputs_batch]
+unseen_prediction = []
+for a in answers:
+    unseen_prediction.append(allWords[a[0]])
+print('\nUnseen Prediction:')
+print ' '.join(unseen_prediction)
