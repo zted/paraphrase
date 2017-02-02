@@ -1,18 +1,28 @@
+import tensorflow as tf
 import numpy as np
-
-from keras.models import Sequential
-from keras.preprocessing.sequence import pad_sequences
-from keras.layers import Dense, Activation, GRU, TimeDistributed, Embedding, RepeatVector
-from keras.callbacks import Callback
 from nltk.corpus import brown
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
 
-
-maxlen = 20
+max_examples = 100
+maxlen = 7
 minlen = 3
 hidden_dim = 128
 embedding_dim = 100
 batch_size = 50
-num_epochs = 1
+num_epochs = 500
+validate_cycle = 10
+
+
+def pad_sequences(arrays, maxlen):
+    newArray = []
+    for a in arrays:
+        someLen = len(a)
+        assert someLen <= maxlen
+        diff = maxlen - someLen
+        padded = a + [0] * diff
+        newArray.append(padded)
+    return newArray
 
 
 def load_word_embeddings(fname):
@@ -25,27 +35,6 @@ def load_word_embeddings(fname):
             wordvec = np.array(map(float, splits[1:]))
             embDict[word] = wordvec
     return embDict
-
-
-def build_model(max_len, num_words, embedding_dim, hidden_dim, embeddings=None):
-    model = Sequential()
-    model.add(Embedding(input_dim=num_words+1,
-                        input_length=max_len,
-                        output_dim=embedding_dim,
-                        mask_zero=True,
-                        weights=embeddings))
-    model.add(GRU(output_dim=hidden_dim,
-                  input_length=max_len))
-    model.add(RepeatVector(max_len))
-    model.add(GRU(output_dim=hidden_dim,
-                  input_length=max_len,
-                  return_sequences=True))
-    model.add(TimeDistributed(Dense(num_words)))
-    model.add(Activation("softmax"))
-    model.compile(optimizer='rmsprop',
-                  loss='categorical_crossentropy',
-                  metrics=['accuracy'])
-    return model
 
 
 def generate_text(model, seed_words, temperature, word2idx, idx2word, N):
@@ -82,15 +71,9 @@ def generate_text2(model, inputs, idx2word):
     print probs
     print probs.shape
     for p in probs[0]:
-        idx = np.argmax(p)
+        idx = np.argmax(p) # -1 because we
         generated_text.append(idx2word[idx])
     return generated_text
-
-
-class ResetStates(Callback):
-    # is this callback necessary?
-    def on_epoch_begin(self, epoch, logs={}):
-        self.model.reset_states()
 
 
 def sample(preds, temperature=1.0):
@@ -109,7 +92,8 @@ gloveDict = load_word_embeddings('glove.6B.100d.txt')
 print('Finished loading word embeddings')
 word2idx = {}
 sentences = []
-unique_words = set([])
+unique_words = set(['NONE'])
+all_words = ['NONE']
 count = 1
 raw_sentences = []
 print('Vectorizing sentences')
@@ -134,42 +118,103 @@ for s in brownSents:
             raw_sentences.append(' '.join(lowered))
             for w in set(words_to_add):
                 unique_words.add(w)
+                all_words.append(w)
                 word2idx[w] = count
                 count += 1
             sentVec = [word2idx[t] for t in lowered]
             sentences.append(sentVec)
+            if len(sentences) >= max_examples:
+                # we have enough
+                break
 
 # we start at count = 1 because the input sequence is padded with 0's until a vector of 20 is reached
 # cannot use the index 0 for any words in the vocab
-num_words = len(word2idx)
-assert count-1 == num_words
-embeddingsMatrix = np.zeros([num_words+1, embedding_dim])
+num_words = len(unique_words)
+assert count == num_words
+assert count == len(all_words)
+embeddingsMatrix = np.zeros([num_words, embedding_dim])
 # create embeddings matrix corresponding to the word indices
-
 print('Creating weights for embeddings layer')
 for word, idx in word2idx.items():
     embeddingsMatrix[idx, :] = gloveDict[word]
 gloveDict = None
 
 print('Building model')
-model = build_model(maxlen, num_words, embedding_dim, hidden_dim, embeddings=[embeddingsMatrix])
 
-sentences_target = np.zeros(shape=(len(sentences), maxlen, num_words), dtype=bool)
-print('Creating target data')
-for ns, sent in enumerate(sentences):
-    for nt, t in enumerate(sent):
-        sentences_target[ns, nt, t-1] = 1
-        # -1 because we don't use padding for output but index 0 is padding in input
+X = pad_sequences(sentences, maxlen=maxlen)
 
-# train on the first 10000 data points
-X = pad_sequences(sentences, maxlen=maxlen, padding='post')[0:10000]
-Y = sentences_target[0:10000]
-model.fit(X, Y, batch_size=batch_size, nb_epoch=num_epochs)
-model_name = 'paraphrase.brown.h5'
-model.save_weights(model_name, overwrite=True)
+seq_length = maxlen
+vocab_size = num_words
+memory_dim = 100
 
-seed_str = list(X[0])
-model.load_weights(model_name)
-generated_text = generate_text2(model, seed_str, list(unique_words))
-print('Original sentence:\n{}'.format(raw_sentences[0]))
-print('Paraphrased:\n{}'.format(' '.join(generated_text)))
+enc_inp = [tf.placeholder(tf.int32, shape=(None,),
+                          name="inp%i" % t)
+           for t in range(seq_length)]
+
+labels = [tf.placeholder(tf.int32, shape=(None,),
+                        name="labels%i" % t)
+          for t in range(seq_length)]
+
+weights = [tf.ones_like(labels_t, dtype=tf.float32)
+           for labels_t in labels]
+
+# Decoder input: prepend some "GO" token and drop the final
+# token of the encoder input
+dec_inp = ([tf.zeros_like(enc_inp[0], dtype=np.int32, name="GO")]
+           + enc_inp[:-1])
+
+# Initial memory value for recurrence.
+prev_mem = tf.zeros((batch_size, memory_dim))
+cell = tf.nn.rnn_cell.GRUCell(memory_dim)
+dec_outputs, dec_memory = tf.nn.seq2seq.embedding_rnn_seq2seq(enc_inp, dec_inp, cell, vocab_size, vocab_size, embedding_dim)
+loss = tf.nn.seq2seq.sequence_loss(dec_outputs, labels, weights, vocab_size)
+tf.summary.scalar("loss", loss)
+magnitude = tf.sqrt(tf.reduce_sum(tf.square(dec_memory[1])))
+tf.summary.scalar("magnitude at t=1", magnitude)
+summary_op = tf.summary.merge_all()
+learning_rate = 0.05
+momentum = 0.9
+optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
+train_op = optimizer.minimize(loss)
+sess = tf.InteractiveSession()
+sess = tf.Session(config=tf.ConfigProto(
+    allow_soft_placement=True, log_device_placement=True))
+sess.run(tf.global_variables_initializer())
+
+
+def train_batch(X, Y):
+    X = np.array(X).T
+    Y = np.array(Y).T
+    feed_dict = {enc_inp[t]: X[t] for t in range(seq_length)}
+    feed_dict.update({labels[t]: Y[t] for t in range(seq_length)})
+
+    _, loss_t, summary = sess.run([train_op, loss, summary_op], feed_dict)
+    return loss_t, summary
+
+
+X_test = [X[1]]
+X_test = np.array(X_test).T
+feed_dict = {enc_inp[t]: X_test[t] for t in range(seq_length)}
+allWords = all_words
+nb_batches = int(np.ceil(len(X_test) / float(batch_size)))
+
+
+print('Number of training examples we have: {}\nNumber of unique words: {}'.format(len(sentences),num_words-1))
+print('Original sentence:\n{}'.format(raw_sentences[1]))
+print('Begin training')
+for t in range(num_epochs):
+
+    for i in range(nb_batches):
+        batch_start = i * batch_size
+        batch_end = min(len(X), batch_start+batch_size)
+        X_batch = X[batch_start:batch_end]
+        loss_t, summary = train_batch(X_batch, X_batch)
+
+    if (t+1) % validate_cycle == 0:
+        print ('Finished training epoch {}\nLoss: {}'.format(t+1, loss_t))
+        dec_outputs_batch = sess.run(dec_outputs, feed_dict)
+        answers = [logits_t.argmax(axis=1) for logits_t in dec_outputs_batch]
+        generated_text = []
+        for a in answers:
+            generated_text.append(allWords[a[0]])
+        print(' '.join(generated_text))

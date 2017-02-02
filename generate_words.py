@@ -58,32 +58,26 @@ def generate_text(model, seed_words, temperature, word2idx, idx2word, N):
 def generate_text2(model, seed_words, temperature, word2idx, idx2word, N):
     model.reset_states()
     # first we initialize the state of the LSTM using the seed_str
-    x = np.zeros((1,30))
+    x = np.zeros(30)
     for n, seed_word in enumerate(seed_words):
         seed_word_idx = word2idx[seed_word]
-        x[0,n] = seed_word_idx
+        x[n] = seed_word_idx
     probs = model.predict(x, verbose=0)
 
-    generated_text = []
-    for p in probs:
-        idx = np.argmax(p)
-        word = idx2word[idx]
-        generated_text.append(word)
-
     # # now we start generating text
-    # probs = probs[0, 0, :]
-    # next_word_idx = sample(probs, temperature)
-    # generated_text_idx = [next_word_idx]
-    # generated_text = [idx2word[next_word_idx]]
-    # for i in xrange(N - 1):
-    #     last_word_idx = generated_text_idx[-1]
-    #     x = np.zeros(shape=model.input_shape)
-    #     x[0, 0] = last_word_idx
-    #     probs = model.predict(x, verbose=0)
-    #     probs = probs[0, 0, :]
-    #     next_word_idx = sample(probs, temperature)
-    #     generated_text_idx.append(next_word_idx)
-    #     generated_text.append(idx2word[next_word_idx])
+    probs = probs[0, 0, :]
+    next_word_idx = sample(probs, temperature)
+    generated_text_idx = [next_word_idx]
+    generated_text = [idx2word[next_word_idx]]
+    for i in xrange(N - 1):
+        last_word_idx = generated_text_idx[-1]
+        x = np.zeros(30)
+        x[0] = last_word_idx
+        probs = model.predict(x, verbose=0)
+        probs = probs[0, 0, :]
+        next_word_idx = sample(probs, temperature)
+        generated_text_idx.append(next_word_idx)
+        generated_text.append(idx2word[next_word_idx])
     return generated_text
 
 
@@ -98,7 +92,7 @@ def sample(preds, temperature=1.0):
 
 model_name = 'wordlevel.%s.h5' % os.path.basename(corpus)
 
-hidden_dim = 512
+hidden_dim = 128
 embedding_dim = 100
 
 from nltk import word_tokenize
@@ -107,4 +101,5 @@ seed_str = [w.lower() for w in word_tokenize(seed_str)]
 trained_model_test = get_model(1, len(word2idx), embedding_dim, hidden_dim)
 trained_model_test.load_weights(model_name)
 generated_text = generate_text2(trained_model_test, seed_str, 1.1, word2idx, words, 30)
-print generated_text[0:10]
+print len(generated_text)
+print generated_text
