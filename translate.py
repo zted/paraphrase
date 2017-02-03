@@ -1,7 +1,14 @@
 import tensorflow as tf
 import numpy as np
 from nltk.corpus import brown
+
 import os
+from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import rnn
+from tensorflow.python.ops import rnn_cell
+from tensorflow.python.ops import variable_scope
+from tensorflow.python.util import nest
+
 os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
 
 max_examples = 10000
@@ -86,6 +93,72 @@ def sample(preds, temperature=1.0):
     probas = np.random.multinomial(1, preds, 1)
     return np.argmax(probas)
 
+def embedding_rnn_seq2seq2(encoder_inputs,
+                          decoder_inputs,
+                          cell,
+                          num_encoder_symbols,
+                          num_decoder_symbols,
+                          embedding_size,
+                          output_projection=None,
+                          feed_previous=False,
+                          dtype=None,
+                          scope=None,
+                          initializer=None):
+  """
+  Same as the one in tensorflow's seq2seq.py except with the option to pass in an initializer
+  """
+  with variable_scope.variable_scope(scope or "embedding_rnn_seq2seq") as scope:
+    if dtype is not None:
+      scope.set_dtype(dtype)
+    else:
+      dtype = scope.dtype
+
+    # Encoder.
+    encoder_cell = rnn_cell.EmbeddingWrapper(
+        cell, embedding_classes=num_encoder_symbols,
+        embedding_size=embedding_size, initializer=initializer)
+    _, encoder_state = rnn.rnn(encoder_cell, encoder_inputs, dtype=dtype)
+
+    # Decoder.
+    if output_projection is None:
+      cell = rnn_cell.OutputProjectionWrapper(cell, num_decoder_symbols)
+
+    if isinstance(feed_previous, bool):
+      return tf.nn.seq2seq.embedding_rnn_decoder(
+          decoder_inputs,
+          encoder_state,
+          cell,
+          num_decoder_symbols,
+          embedding_size,
+          output_projection=output_projection,
+          feed_previous=feed_previous)
+
+    # If feed_previous is a Tensor, we construct 2 graphs and use cond.
+    def decoder(feed_previous_bool):
+      reuse = None if feed_previous_bool else True
+      with variable_scope.variable_scope(
+          variable_scope.get_variable_scope(), reuse=reuse) as scope:
+        outputs, state = tf.nn.seq2seq.embedding_rnn_decoder(
+            decoder_inputs, encoder_state, cell, num_decoder_symbols,
+            embedding_size, output_projection=output_projection,
+            feed_previous=feed_previous_bool,
+            update_embedding_for_previous=False)
+        state_list = [state]
+        if nest.is_sequence(state):
+          state_list = nest.flatten(state)
+        return outputs + state_list
+
+    outputs_and_state = control_flow_ops.cond(feed_previous,
+                                              lambda: decoder(True),
+                                              lambda: decoder(False))
+    outputs_len = len(decoder_inputs)  # Outputs length same as decoder inputs.
+    state_list = outputs_and_state[outputs_len:]
+    state = state_list[0]
+    if nest.is_sequence(encoder_state):
+      state = nest.pack_sequence_as(structure=encoder_state,
+                                    flat_sequence=state_list)
+    return outputs_and_state[:outputs_len], state
+
 
 brownSents = brown.sents(categories=['hobbies', 'news', 'fiction', 'adventure', 'reviews', 'editorials', 'romance'])
 print('Finished loading sentences from brown corpus')
@@ -138,6 +211,7 @@ embeddingsMatrix = np.zeros([num_words, embedding_dim])
 print('Creating weights for embeddings layer')
 for word, idx in word2idx.items():
     embeddingsMatrix[idx, :] = gloveDict[word]
+word2idx['NONE'] = 0
 gloveDict = None
 
 print('Building model')
@@ -167,7 +241,7 @@ dec_inp = ([tf.zeros_like(enc_inp[0], dtype=np.int32, name="GO")]
 # Initial memory value for recurrence.
 prev_mem = tf.zeros((batch_size, memory_dim))
 cell = tf.nn.rnn_cell.GRUCell(memory_dim)
-dec_outputs, dec_memory = tf.nn.seq2seq.embedding_rnn_seq2seq(enc_inp, dec_inp, cell, vocab_size, vocab_size, embedding_dim)
+dec_outputs, dec_memory = embedding_rnn_seq2seq2(enc_inp, dec_inp, cell, vocab_size, vocab_size, embedding_dim, pretrained_embeddings=tf.constant_initializer(embeddingsMatrix))
 loss = tf.nn.seq2seq.sequence_loss(dec_outputs, labels, weights, vocab_size)
 tf.summary.scalar("loss", loss)
 magnitude = tf.sqrt(tf.reduce_sum(tf.square(dec_memory[1])))
@@ -177,9 +251,7 @@ learning_rate = 0.05
 momentum = 0.9
 optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
 train_op = optimizer.minimize(loss)
-sess = tf.InteractiveSession()
-sess = tf.Session(config=tf.ConfigProto(
-    allow_soft_placement=True, log_device_placement=True))
+sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
 sess.run(tf.global_variables_initializer())
 
 
