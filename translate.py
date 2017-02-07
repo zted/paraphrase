@@ -17,7 +17,7 @@ except IndexError as e:
 
 os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
 
-max_examples = 100000000000000
+max_examples = 100000000000000 #no limit
 maxlen = 30
 minlen = 5
 embedding_dim = 100
@@ -180,7 +180,6 @@ vocab_size = len(word2idx)
 
 unseen_sent = ['defendants testifies after fears about election', 'i like taking walks', 'the dog is a great and caring animal']
 unseen_vectorized = [[word2idx[w] for w in sent.split(' ')] for sent in unseen_sent]
-print unseen_vectorized
 unseen_sent_padded = np.array(D.pad_sequences(unseen_vectorized, maxlen))
 X_unseen = np.array(unseen_sent_padded)
 X_unseen = np.array(X_unseen).T
@@ -237,7 +236,7 @@ for t in range(num_epochs):
         if (i+1) % validate_cycle == 0:
             print ('Training epoch {} batch {}/{}\nLoss: {}'.format(t+1, i+1, nb_batches, loss_t))
             saver.save(sess, 'my-model')
-            val_indices = np.random.choice(range(max_examples), validation_size, replace=False)
+            val_indices = np.random.choice(range(len(X)), validation_size, replace=False)
             print('Randomly selected training sentences:\n{}'.format([raw_sentences[v] for v in val_indices]))
             X_test = np.array([X[v] for v in val_indices])
             X_test = np.array(X_test).T

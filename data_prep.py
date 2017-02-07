@@ -99,7 +99,7 @@ def load_google_sentences_nodict(filename, minlen, maxlen, word2idx, max_example
     with open(filename, 'r') as f:
         for q in f:
             stripped = q.strip()
-            tokens = word_tokenize(stripped)
+            tokens = stripped.split(' ')
             if len(tokens) <= maxlen and len(tokens) >= minlen:
                 # only take sentences that aren't too long nor too short
                 lowered = [t.lower() for t in tokens]
