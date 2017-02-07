@@ -111,6 +111,7 @@ def predict_sentence(X, enc, maxlen):
     most_probable_ans = [seqs.argmax(axis=1) for seqs in raw_predictions]
     most_probable_ans = np.array(most_probable_ans).T
     sampled_ans = [sample_sequence(seqs) for seqs in raw_predictions]
+    sampled_ans = np.array(sampled_ans).T
 
     most_probable_text = []
     sampled_text = []
@@ -224,6 +225,7 @@ print('Number of training examples we have: {}\n'.format(len(X)))
 if tfSessionFile is not None:
     loader = tf.train.import_meta_graph(tfSessionFile)
     loader.restore(sess, tf.train.latest_checkpoint('./'))
+    print('Loaded from {} successfully'.format(tfSessionFile))
 
 print('Begin training')
 for t in range(num_epochs):
