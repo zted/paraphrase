@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import data_prep as D
+import sys
 
 import os
 from tensorflow.python.ops import control_flow_ops
@@ -9,15 +10,21 @@ from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
 
+try:
+    tfSessionFile = sys.argv[1]
+except IndexError as e:
+    tfSessionFile = None
+
 os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
 
-max_examples = 10000
-maxlen = 18
-minlen = 3
+max_examples = 100000000000000
+maxlen = 30
+minlen = 5
 embedding_dim = 100
-batch_size = 50
-num_epochs = 2000
-validate_cycle = 50
+batch_size = 100
+num_epochs = 5
+validate_cycle = 1000
+# validate every x batches
 validation_size = 5
 recurrent_dim = 100
 
@@ -98,18 +105,42 @@ def train_batch(X, Y):
     return loss_t, summary
 
 
-def predict_unseen_sentence(sentence):
-    unseen_vectorized = [word2idx[w] for w in sentence.split(' ')]
-    vector_padded = np.array(D.pad_sequences([unseen_vectorized], maxlen))
-    X_test = np.array(vector_padded)
-    X_test = np.array(X_test).T
-    feed_dict = {enc_inp[t]: X_test[t] for t in range(maxlen)}
-    dec_outputs_batch = sess.run(dec_outputs, feed_dict)
-    answers = [logits_t.argmax(axis=1) for logits_t in dec_outputs_batch]
-    unseen_prediction = []
-    for a in answers:
-        unseen_prediction.append(all_words[a[0]])
-    print('\nUnseen Sentence:{}\nUnseen Prediction:{}'.format(sentence, ' '.join(unseen_prediction)))
+def predict_sentence(X, enc, maxlen):
+    feed_dict = {enc[t]: X[t] for t in range(maxlen)}
+    raw_predictions = sess.run(dec_outputs, feed_dict)
+    most_probable_ans = [seqs.argmax(axis=1) for seqs in raw_predictions]
+    most_probable_ans = np.array(most_probable_ans).T
+    sampled_ans = [sample_sequence(seqs) for seqs in raw_predictions]
+
+    most_probable_text = []
+    sampled_text = []
+    for s1, s2 in zip(most_probable_ans, sampled_ans):
+        s1Str = []
+        s2Str = []
+        for t1, t2 in zip(s1, s2):
+            s1Str.append(all_words[t1])
+            s2Str.append(all_words[t2])
+        most_probable_text.append(' '.join(s1Str))
+        sampled_text.append(' '.join(s2Str))
+
+    print('Most probable predictions\n{}'.format(most_probable_text))
+    print('Sampled precitions\n{}'.format(sampled_text))
+
+
+def sample_sequence(seq):
+    out = []
+    for distribution in seq:
+        out.append(sample(distribution))
+    return out
+
+
+def sample(preds):
+    # helper function to sample an index from a probability array
+    preds = np.asarray(preds).astype('float64')
+    exp_preds = np.exp(preds)
+    preds = exp_preds / np.sum(exp_preds)
+    probas = np.random.multinomial(1, preds, 1)
+    return np.argmax(probas)
 
 
 gloveDict = D.load_word_embeddings('glove.6B.100d.txt')
@@ -127,16 +158,34 @@ for n, (word, vec) in enumerate(gloveDict.items()):
 gloveDict = None
 
 print('Finished loading word embeddings')
+print('Loading Sentences')
+j1 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_test2015_questions.json'
+j2 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_test-dev2015_questions.json'
+j3 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_train2014_questions.json'
+j4 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_val2014_questions.json'
+gigaCorpus = '/export/home1/NoCsBack/hci/ted/translate_datadir/google_processed_minlen5_maxlen30.txt'
 
-raw_sentences, sentences = D.load_brown_questions(minlen, maxlen, word2idx, max_examples)
+raw_sentences0, sentences0 = D.load_google_sentences_nodict(j4, minlen, maxlen, word2idx, max_examples)
+raw_sentences1, sentences1 = D.load_vqa_questions(j1, minlen, maxlen, word2idx, max_examples)
+raw_sentences2, sentences2 = D.load_vqa_questions(j2, minlen, maxlen, word2idx, max_examples)
+raw_sentences3, sentences3 = D.load_vqa_questions(j3, minlen, maxlen, word2idx, max_examples)
+raw_sentences4, sentences4 = D.load_vqa_questions(j4, minlen, maxlen, word2idx, max_examples)
 
-
-print('Building model')
+raw_sentences = raw_sentences0 + raw_sentences1 + raw_sentences2 + raw_sentences3 + raw_sentences4
+sentences = sentences0 + sentences1 + sentences2 + sentences3 + sentences4
 
 X = sentences
 sentences = None
 vocab_size = len(word2idx)
 
+unseen_sent = ['defendants testifies after fears about election', 'i like taking walks', 'the dog is a great and caring animal']
+unseen_vectorized = [[word2idx[w] for w in sent.split(' ')] for sent in unseen_sent]
+print unseen_vectorized
+unseen_sent_padded = np.array(D.pad_sequences(unseen_vectorized, maxlen))
+X_unseen = np.array(unseen_sent_padded)
+X_unseen = np.array(X_unseen).T
+
+print('Building model')
 enc_inp = [tf.placeholder(tf.int32, shape=(None,),
                           name="inp%i" % t)
            for t in range(maxlen)]
@@ -168,39 +217,33 @@ optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
 train_op = optimizer.minimize(loss)
 sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
 sess.run(tf.global_variables_initializer())
+saver = tf.train.Saver()
 
 nb_batches = int(np.ceil(len(X) / float(batch_size)))
 print('Number of training examples we have: {}\n'.format(len(X)))
+
+if tfSessionFile is not None:
+    loader = tf.train.import_meta_graph(tfSessionFile)
+    loader.restore(sess, tf.train.latest_checkpoint('./'))
+
 print('Begin training')
-
-
-unseen_sent = ['defendants testifies after fears about election', 'i like taking walks', 'the dog is a great and caring animal']
 for t in range(num_epochs):
-
     for i in range(nb_batches):
         batch_start = i * batch_size
         batch_end = min(len(X), batch_start+batch_size)
         X_batch = X[batch_start:batch_end]
         loss_t, summary = train_batch(X_batch, X_batch)
 
-    if (t+1) % validate_cycle == 0:
-        val_indices = np.random.choice(range(max_examples), validation_size, replace=False)
-        X_test = np.array([X[v] for v in val_indices])
-        X_test = np.array(X_test).T
-        feed_dict = {enc_inp[t]: X_test[t] for t in range(maxlen)}
-        print ('Finished training epoch {}\nLoss: {}'.format(t+1, loss_t))
-        dec_outputs_batch = sess.run(dec_outputs, feed_dict)
-        answers = [logits_t.argmax(axis=1) for logits_t in dec_outputs_batch]
-        answers = np.array(answers).T
+        if (i+1) % validate_cycle == 0:
+            print ('Training epoch {} batch {}/{}\nLoss: {}'.format(t+1, i+1, nb_batches, loss_t))
+            saver.save(sess, 'my-model')
+            val_indices = np.random.choice(range(max_examples), validation_size, replace=False)
+            print('Randomly selected training sentences:\n{}'.format([raw_sentences[v] for v in val_indices]))
+            X_test = np.array([X[v] for v in val_indices])
+            X_test = np.array(X_test).T
+            predict_sentence(X_test, enc_inp, maxlen)
 
-        generated_text = []
-        for sent in answers:
-            sentString = []
-            for token in sent:
-                sentString.append(all_words[token])
-            generated_text.append(' '.join(sentString))
+            print('\nUnseen sentences:\n{}'.format(unseen_sent))
+            predict_sentence(X_unseen, enc_inp, maxlen)
 
-        print('Original sentences:\n{}'.format([raw_sentences[v] for v in val_indices]))
-        print(generated_text)
-        for u in unseen_sent:
-            predict_unseen_sentence(u)
+saver.save(sess, 'my-model')

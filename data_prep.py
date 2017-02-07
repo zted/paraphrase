@@ -2,13 +2,6 @@ import numpy as np
 from nltk import word_tokenize
 import json
 
-# max_examples = 10000000000
-# maxlen = 20
-# minlen = 5
-# hidden_dim = 128
-# embedding_dim = 100
-# someFile = '/export/home1/NoCsBack/hci/ted/translate_datadir/giga-fren.release2.fixed.en'
-
 
 def load_word_embeddings(fname):
     # loads word embeddings into a dictionary
@@ -99,6 +92,31 @@ def load_google_sentences(filename, minlen, maxlen, word2idx, max_examples):
     return raw_sentences, vectorized_sentences
 
 
+def load_google_sentences_nodict(filename, minlen, maxlen, word2idx, max_examples):
+    print('Begin loading from {}'.format(filename))
+    raw_sentences = []
+    vectorized_sentences = []
+    with open(filename, 'r') as f:
+        for q in f:
+            stripped = q.strip()
+            tokens = word_tokenize(stripped)
+            if len(tokens) <= maxlen and len(tokens) >= minlen:
+                # only take sentences that aren't too long nor too short
+                lowered = [t.lower() for t in tokens]
+                sentVec = []
+                for w in lowered:
+                    idx = word2idx[w]
+                    sentVec.append(idx)
+                # vectorize it
+                raw_sentences.append(' '.join(lowered))
+                vectorized_sentences.append(pad_instance(sentVec, maxlen))
+                if len(vectorized_sentences) >= max_examples:
+                    # we have enough
+                    break
+    print('Finished loading {} sentences from {}'.format(len(vectorized_sentences), filename))
+    return raw_sentences, vectorized_sentences
+
+
 def load_brown_questions(minlen, maxlen, word2idx, max_examples):
     from nltk.corpus import brown
     raw_sentences = []
@@ -123,7 +141,6 @@ def load_brown_questions(minlen, maxlen, word2idx, max_examples):
                 # vectorize it
                 raw_sentences.append(' '.join(lowered))
                 vectorized_sentences.append(pad_instance(sentVec, maxlen))
-                vectorized_sentences.append(pad_instance(sentVec, maxlen))
                 if len(vectorized_sentences) >= max_examples:
                     # we have enough
                     break
@@ -144,10 +161,3 @@ def pad_sequences(arrays, maxlen, pad_symbol=0):
     for a in arrays:
         newArray.append(pad_instance(a, maxlen, pad_symbol=pad_symbol))
     return newArray
-
-
-
-j1 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_test2015_questions.json'
-j2 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_test-dev2015_questions.json'
-j3 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_train2014_questions.json'
-j4 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_val2014_questions.json'
