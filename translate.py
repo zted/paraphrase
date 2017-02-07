@@ -165,7 +165,7 @@ j3 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_train2014_questions.j
 j4 = '/export/home1/NoCsBack/hci/ted/data/OpenEnded_mscoco_val2014_questions.json'
 gigaCorpus = '/export/home1/NoCsBack/hci/ted/translate_datadir/google_processed_minlen5_maxlen30.txt'
 
-raw_sentences0, sentences0 = D.load_google_sentences_nodict(j4, minlen, maxlen, word2idx, max_examples)
+raw_sentences0, sentences0 = D.load_google_sentences_nodict(gigaCorpus, minlen, maxlen, word2idx, max_examples)
 raw_sentences1, sentences1 = D.load_vqa_questions(j1, minlen, maxlen, word2idx, max_examples)
 raw_sentences2, sentences2 = D.load_vqa_questions(j2, minlen, maxlen, word2idx, max_examples)
 raw_sentences3, sentences3 = D.load_vqa_questions(j3, minlen, maxlen, word2idx, max_examples)
