@@ -178,8 +178,19 @@ sentences = sentences0 + sentences1 + sentences2 + sentences3 + sentences4
 X = sentences
 sentences = None
 vocab_size = len(word2idx)
+print('Number of training examples we have: {}\n'.format(len(X)))
 
-unseen_sent = ['defendants testifies after fears about election', 'i like taking walks', 'the dog is a great and caring animal']
+unseen_sent = ['is the man in the yellow shirt dancing ?',
+               'how many people can be seen ?',
+               'is this a clubhouse ?',
+               'what piece of furniture is clearly visible ?',
+               'how many windows can you see ?',
+               'is this in a park ?',
+               'what is the teddy bear sitting on ?',
+               'is the water running in the sink ?',
+               'what color is the fence ?',
+               'what uniform is she wearing ?'
+               ]
 unseen_vectorized = [[word2idx[w] for w in sent.split(' ')] for sent in unseen_sent]
 unseen_sent_padded = np.array(D.pad_sequences(unseen_vectorized, maxlen))
 X_unseen = np.array(unseen_sent_padded)
@@ -220,11 +231,10 @@ sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 
 nb_batches = int(np.ceil(len(X) / float(batch_size)))
-print('Number of training examples we have: {}\n'.format(len(X)))
 
 if tfSessionFile is not None:
-    loader = tf.train.import_meta_graph(tfSessionFile)
-    loader.restore(sess, tf.train.latest_checkpoint('./'))
+    loader = tf.train.import_meta_graph(tfSessionFile+'.meta')
+    loader.restore(sess, tfSessionFile)
     print('Loaded from {} successfully'.format(tfSessionFile))
 
 print('Begin training')
@@ -237,7 +247,7 @@ for t in range(num_epochs):
 
         if (i+1) % validate_cycle == 0:
             print ('Training epoch {} batch {}/{}\nLoss: {}'.format(t+1, i+1, nb_batches, loss_t))
-            saver.save(sess, 'my-model')
+            saver.save(sess, 'my-model2')
             val_indices = np.random.choice(range(len(X)), validation_size, replace=False)
             print('Randomly selected training sentences:\n{}'.format([raw_sentences[v] for v in val_indices]))
             X_test = np.array([X[v] for v in val_indices])
@@ -247,4 +257,4 @@ for t in range(num_epochs):
             print('\nUnseen sentences:\n{}'.format(unseen_sent))
             predict_sentence(X_unseen, enc_inp, maxlen)
 
-saver.save(sess, 'my-model')
+saver.save(sess, 'my-model3')
